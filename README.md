@@ -235,4 +235,4 @@ ed.save("output_copy.docx")   # to a new file
 
 ## License
 
-MIT
+[PolyForm NonCommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/) — free for research, education, and personal use. Commercial use requires a separate agreement with NORCE Norwegian Research Centre AS.
