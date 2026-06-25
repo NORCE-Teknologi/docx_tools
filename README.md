@@ -84,6 +84,56 @@ Add this to `~/.claude/settings.json` so Claude never prompts for permission on 
 
 ---
 
+## Quick start example
+
+After installing and registering the MCP server, you can drive it from the Claude CLI in one shot:
+
+**Linux / macOS (bash)**
+```bash
+# 1. Create a minimal test document in the current directory
+python -c "
+from docx import Document
+d = Document()
+d.add_heading('Hello World', level=1)
+d.add_paragraph('This is a test document created by docx_tools MCP server.')
+d.save('hello.docx')
+"
+
+# 2. Ask Claude to open it — $(pwd) expands to the current directory automatically
+claude -p "Using the docx-editor MCP tools: open $(pwd)/hello.docx, list all paragraphs, and tell me what the document contains." --allowedTools "mcp__docx-editor__*"
+```
+
+**Windows (PowerShell)**
+```powershell
+# 1. Create a minimal test document in the current directory
+python -c "
+from docx import Document
+d = Document()
+d.add_heading('Hello World', level=1)
+d.add_paragraph('This is a test document created by docx_tools MCP server.')
+d.save('hello.docx')
+"
+
+# 2. Ask Claude to open it — $PWD expands to the current directory automatically
+claude -p "Using the docx-editor MCP tools: open $PWD\hello.docx, list all paragraphs, and tell me what the document contains." --allowedTools "mcp__docx-editor__*"
+```
+
+Expected output (approximate):
+
+```
+The document contains 2 paragraphs:
+  P0  [Heading 1]  Hello World
+  P1  [Normal]     This is a test document created by docx_tools.
+```
+
+You can go further in the same command — ask Claude to edit, insert, or reformat paragraphs and save the result:
+
+**bash:** `claude -p "Using the docx-editor MCP tools: open $(pwd)/hello.docx, replace the heading text with 'Goodbye World', then save the document." --allowedTools "mcp__docx-editor__*"`
+
+**PowerShell:** `claude -p "Using the docx-editor MCP tools: open $PWD\hello.docx, replace the heading text with 'Goodbye World', then save the document." --allowedTools "mcp__docx-editor__*"`
+
+---
+
 ## MCP tool reference
 
 All tools operate on a single document kept open in server memory. Call `open_document` first, then use read/write tools freely, and call `save_document` when done.
