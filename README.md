@@ -235,4 +235,4 @@ ed.save("output_copy.docx")   # to a new file
 
 ## License
 
-[PolyForm NonCommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0) — free for research, education, and personal use. Commercial use requires a separate agreement with NORCE Norwegian Research Centre AS.
+[GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)](LICENSE.md) — free to use, modify, and distribute under the terms of the AGPL. Any modified version deployed as a network service must also be released under the AGPL.
