@@ -20,6 +20,18 @@ class DocxEditor:
         self.path = Path(path)
         self.doc = docx.Document(str(self.path))
 
+    @classmethod
+    def create(cls, path: str) -> "DocxEditor":
+        """Create a new blank .docx at path and return an editor for it."""
+        new_doc = docx.Document()
+        # Remove the default empty paragraph Word always adds
+        for p in list(new_doc.paragraphs):
+            p._element.getparent().remove(p._element)
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        new_doc.save(str(p))
+        return cls(str(p))
+
     # ── Read ──────────────────────────────────────────────────────────────────
 
     def paragraphs(self, include_empty: bool = False) -> list:
@@ -146,6 +158,11 @@ class DocxEditor:
         if first_rpr is not None:
             new_run._r.insert(0, first_rpr)
         return old_text
+
+    def append(self, text: str, style: str = "Body Text") -> int:
+        """Append a paragraph at the end of the document. Returns its index."""
+        self.doc.element.body.append(self._make_para(text, style))
+        return len(self.doc.paragraphs) - 1
 
     def insert_after(self, idx: int, text: str, style: str = "Body Text") -> int:
         """Insert paragraph after idx. Returns new paragraph's index."""

@@ -34,6 +34,14 @@ def _ed() -> DocxEditor:
 # ── Document lifecycle ────────────────────────────────────────────────────────
 
 @mcp.tool()
+def create_document(path: str) -> str:
+    """Create a new blank Word .docx file at path and open it for editing."""
+    global _editor
+    _editor = DocxEditor.create(path)
+    return f"Created and opened: {path}\n0 paragraphs total."
+
+
+@mcp.tool()
 def open_document(path: str) -> str:
     """Open a Word .docx file for editing. Must be called before any other tool."""
     global _editor
@@ -141,6 +149,17 @@ def replace_paragraph(idx: int, new_text: str) -> str:
     """
     old = _ed().replace(idx, new_text)
     return f"P{idx} replaced.\nOLD: {old[:200]}\nNEW: {new_text[:200]}"
+
+
+@mcp.tool()
+def append_paragraph(text: str, style: str = "Body Text") -> str:
+    """
+    Append a new paragraph at the end of the document.
+    Use list_styles() to see valid style names.
+    Returns the index of the newly appended paragraph.
+    """
+    new_idx = _ed().append(text, style)
+    return f"Appended at P{new_idx} (style: '{style}')."
 
 
 @mcp.tool()
