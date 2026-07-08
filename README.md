@@ -159,6 +159,8 @@ All tools operate on a single document kept open in server memory. Call `open_do
 | `get_comments` | — | All Word comments with author, date, and text. |
 | `get_tracked_changes` | — | All tracked insertions and deletions. |
 | `get_tables` | — | All tables as lists of cell text. |
+| `get_fields` | `idx?` | List Word field codes (SEQ, REF, ADDIN…) for one paragraph or the whole doc — distinguishes an auto-numbered caption (SEQ field) from a hand-typed number. |
+| `get_paragraph_detail` | `idx` | Style, plain text, `accepted_text`, `raw_text` (deletions shown), field codes, and `has_tracked_changes` — for paragraphs garbled by tracked changes. |
 
 ### Write tools
 
@@ -169,6 +171,9 @@ All tools operate on a single document kept open in server memory. Call `open_do
 | `insert_paragraph_before` | `before_idx`, `text`, `style` | Insert a new paragraph before the given index. |
 | `delete_paragraph` | `idx` | Delete a paragraph. |
 | `set_paragraph_style` | `idx`, `style` | Change a paragraph's style (e.g. `Heading 2`, `Body Text`). |
+| `set_caption` | `idx`, `text`, `label?`, `sep?`, `style?` | Rewrite a paragraph as a clean auto-numbered caption `<label> {SEQ <label> \* ARABIC><sep><text>`, clearing stray manual numbers / half-deleted field cruft. |
+| `accept_changes` | `author?` | Accept all tracked changes (or just one author's). |
+| `reject_changes` | `author?` | Reject all tracked changes (or just one author's). |
 
 > **Index stability**: paragraph indices shift after insert/delete operations. Re-query with `list_paragraphs` or `find_paragraphs` if you need to locate paragraphs after editing.
 
@@ -215,11 +220,16 @@ ed.save("output_copy.docx")   # to a new file
 | `comments()` | `list[dict]` | Word comments. |
 | `tracked_changes()` | `list[dict]` | Tracked insertions/deletions. |
 | `tables()` | `list[dict]` | Tables as cell-text grids. |
+| `fields(idx=None)` | `list[dict]` | Field codes per paragraph (SEQ/REF/ADDIN…). |
+| `detail(idx)` | `dict` | Style, plain/accepted/raw text, fields, `has_tracked_changes`. |
 | `replace(idx, new_text)` | `str` | Replace text, returns old text. |
 | `insert_after(idx, text, style)` | `int` | Insert after idx, returns new index. |
 | `insert_before(idx, text, style)` | `int` | Insert before idx, returns new index. |
 | `delete(idx)` | `str` | Delete paragraph, returns old text. |
 | `set_style(idx, style)` | `None` | Change paragraph style. |
+| `set_caption(idx, text, label='Figure', sep=': ', style=None)` | `str` | Rewrite a paragraph as an auto-numbered SEQ-field caption. |
+| `accept_changes(author=None)` | `int` | Accept tracked changes, returns count resolved. |
+| `reject_changes(author=None)` | `int` | Reject tracked changes, returns count resolved. |
 | `save(path=None)` | `Path` | Save document. |
 
 ---
