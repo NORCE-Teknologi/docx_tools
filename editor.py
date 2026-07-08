@@ -98,18 +98,13 @@ class DocxEditor:
 
     def comments(self) -> list:
         """Extract all Word comments. Returns list of {id, author, date, text}."""
-        ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
         out = []
         try:
-            cp = self.doc.part.comments_part
-            if cp is None:
-                return []
-            for c in cp._element.findall(f".//{{{ns}}}comment"):
-                cid = c.get(qn("w:id"))
-                author = c.get(qn("w:author"), "")
-                date = c.get(qn("w:date"), "")
-                text = "".join(el.text or "" for el in c.findall(f".//{{{ns}}}t"))
-                out.append({"id": cid, "author": author, "date": date, "text": text})
+            for c in self.doc.comments:
+                ts = c.timestamp
+                date = ts.isoformat() if ts is not None else ""
+                out.append({"id": str(c.comment_id), "author": c.author or "",
+                            "date": date, "text": c.text})
         except Exception as e:
             out.append({"error": str(e)})
         return out
