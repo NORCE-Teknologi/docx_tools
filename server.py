@@ -138,6 +138,27 @@ def get_tables() -> str:
     return json.dumps(_ed().tables(), ensure_ascii=False, indent=2)
 
 
+@mcp.tool()
+def get_fields(idx: Optional[int] = None) -> str:
+    """
+    List Word field codes (SEQ, REF, ADDIN, etc.), which plain-text tools can't see.
+    Pass idx for a single paragraph, or omit for the whole document.
+    Returns [{idx, fields:[{kind, type, instr, result}]}]. Use this to tell an
+    auto-numbered caption (a SEQ field) from a hand-typed number (no field).
+    """
+    return json.dumps(_ed().fields(idx), ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def get_paragraph_detail(idx: int) -> str:
+    """
+    Full detail for one paragraph: style, plain text, accepted_text (tracked
+    changes accepted), raw_text (deletions shown), field codes, and
+    has_tracked_changes. Use when a paragraph looks garbled due to tracked changes.
+    """
+    return json.dumps(_ed().detail(idx), ensure_ascii=False, indent=2)
+
+
 # ── Write ─────────────────────────────────────────────────────────────────────
 
 @mcp.tool()
@@ -198,6 +219,43 @@ def set_paragraph_style(idx: int, style: str) -> str:
     """Change the style of the paragraph at idx (e.g. 'Heading 2', 'Body Text')."""
     _ed().set_style(idx, style)
     return f"P{idx} style set to '{style}'."
+
+
+@mcp.tool()
+def set_caption(idx: int, text: str, label: str = "Figure",
+                sep: str = ": ", style: Optional[str] = None) -> str:
+    """
+    Rewrite paragraph idx as a clean AUTO-NUMBERED caption:
+    '<label> {SEQ <label> * ARABIC}<sep><text>'.
+    Clears any existing runs, stray manual numbers, and half-deleted field cruft.
+    label is the sequence name ('Figure' or 'Table'); sep defaults to ': ';
+    pass style='Caption' to also set the paragraph style.
+    The number recomputes in Word on open / Ctrl+A+F9. Returns the new plain text.
+    """
+    new_text = _ed().set_caption(idx, text, label=label, sep=sep, style=style)
+    return f"P{idx} set to caption: {new_text[:200]}"
+
+
+@mcp.tool()
+def accept_changes(author: Optional[str] = None) -> str:
+    """
+    Accept all tracked changes in the document (insertions kept, deletions removed,
+    format-change markers cleared). Pass author to accept only one person's changes.
+    Returns the number of change elements resolved.
+    """
+    n = _ed().accept_changes(author)
+    return f"Accepted {n} tracked-change element(s)" + (f" by {author}" if author else "") + "."
+
+
+@mcp.tool()
+def reject_changes(author: Optional[str] = None) -> str:
+    """
+    Reject all tracked changes (insertions removed, deletions restored, format
+    changes reverted). Pass author to reject only one person's changes.
+    Returns the number of change elements resolved.
+    """
+    n = _ed().reject_changes(author)
+    return f"Rejected {n} tracked-change element(s)" + (f" by {author}" if author else "") + "."
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

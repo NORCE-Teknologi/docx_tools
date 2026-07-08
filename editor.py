@@ -131,6 +131,90 @@ class DocxEditor:
             out.append({"table_idx": i, "rows": rows})
         return out
 
+    # ── Fields & tracked-change inspection ──────────────────────────────────────
+
+    def _para_fields(self, pel) -> list:
+        """List Word field codes in a paragraph element (simple + complex)."""
+        fields = []
+        # simple fields: <w:fldSimple w:instr="...">result</w:fldSimple>
+        for fs in pel.iter(qn("w:fldSimple")):
+            instr = (fs.get(qn("w:instr")) or "").strip()
+            result = "".join(t.text or "" for t in fs.iter(qn("w:t")))
+            fields.append({"kind": "simple", "instr": instr,
+                           "type": instr.split()[0] if instr else "", "result": result})
+        # complex fields: fldChar begin / instrText / separate / result / end
+        state = None
+        instr = result = ""
+        for r in pel.iter(qn("w:r")):
+            fc = r.find(qn("w:fldChar"))
+            it = r.find(qn("w:instrText"))
+            t = r.find(qn("w:t"))
+            if fc is not None:
+                typ = fc.get(qn("w:fldCharType"))
+                if typ == "begin":
+                    state, instr, result = "instr", "", ""
+                elif typ == "separate":
+                    state = "result"
+                elif typ == "end":
+                    s = instr.strip()
+                    fields.append({"kind": "complex", "instr": s,
+                                   "type": s.split()[0] if s else "", "result": result})
+                    state = None
+            elif it is not None and state == "instr":
+                instr += it.text or ""
+            elif t is not None and state == "result":
+                result += t.text or ""
+        return fields
+
+    def _para_text(self, pel):
+        """Return (accepted_text, raw_text) for a paragraph, honouring ins/del."""
+        acc, raw = [], []
+
+        def walk(el, indel=False):
+            for ch in el:
+                tag = ch.tag
+                if tag in (qn("w:del"), qn("w:moveFrom")):
+                    walk(ch, True)
+                elif tag in (qn("w:ins"), qn("w:moveTo")):
+                    walk(ch, indel)
+                elif tag == qn("w:r"):
+                    for s in ch:
+                        if s.tag == qn("w:t"):
+                            raw.append(s.text or "")
+                            if not indel:
+                                acc.append(s.text or "")
+                        elif s.tag == qn("w:delText"):
+                            raw.append(s.text or "")
+                else:
+                    walk(ch, indel)
+        walk(pel)
+        return "".join(acc), "".join(raw)
+
+    def fields(self, idx: Optional[int] = None) -> list:
+        """
+        List field codes. If idx is given, just that paragraph; else the whole doc.
+        Each entry: {idx, fields:[{kind, type, instr, result}]}.
+        """
+        if idx is not None:
+            paras = [(idx, self.doc.paragraphs[idx])]
+        else:
+            paras = list(enumerate(self.doc.paragraphs))
+        out = []
+        for i, p in paras:
+            fs = self._para_fields(p._element)
+            if fs:
+                out.append({"idx": i, "fields": fs})
+        return out
+
+    def detail(self, idx: int) -> dict:
+        """Full paragraph detail: style, text, accepted/raw text, and field codes."""
+        p = self.doc.paragraphs[idx]
+        acc, raw = self._para_text(p._element)
+        return {"idx": idx, "style": p.style.name, "text": p.text,
+                "accepted_text": acc, "raw_text": raw,
+                "fields": self._para_fields(p._element),
+                "has_tracked_changes": acc != raw}
+
     # ── Write ─────────────────────────────────────────────────────────────────
 
     def replace(self, idx: int, new_text: str) -> str:
@@ -182,6 +266,35 @@ class DocxEditor:
         """Change the paragraph style at idx."""
         self.doc.paragraphs[idx].style = self.doc.styles[style]
 
+    def set_caption(self, idx: int, text: str, label: str = "Figure",
+                    sep: str = ": ", style: Optional[str] = None) -> str:
+        """
+        Rewrite paragraph idx as a clean auto-numbered caption:
+        '<label> {SEQ <label> \\* ARABIC}<sep><text>'.
+        Removes any existing runs/fields/tracked-change cruft in the paragraph.
+        Optionally set the paragraph style (e.g. 'Caption'). Returns new plain text.
+        """
+        if style:
+            self.set_style(idx, style)
+        p = self.doc.paragraphs[idx]._element
+        pPr = p.find(qn("w:pPr"))
+        for child in list(p):
+            if child is not pPr:
+                p.remove(child)
+        p.append(self._run(f"{label} "))
+        for el in self._seq_field(label):
+            p.append(el)
+        p.append(self._run(f"{sep}{text}"))
+        return self.doc.paragraphs[idx].text
+
+    def accept_changes(self, author: Optional[str] = None) -> int:
+        """Accept all tracked changes (optionally only from one author). Returns count."""
+        return self._resolve(accept=True, author=author)
+
+    def reject_changes(self, author: Optional[str] = None) -> int:
+        """Reject all tracked changes (optionally only from one author). Returns count."""
+        return self._resolve(accept=False, author=author)
+
     # ── Save ──────────────────────────────────────────────────────────────────
 
     def save(self, path: Optional[str] = None) -> Path:
@@ -214,3 +327,112 @@ class DocxEditor:
         r.append(t_el)
         new_para.append(r)
         return new_para
+
+    _XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
+
+    def _run(self, text: str):
+        """Build a w:r run wrapping preserved-space text."""
+        r = OxmlElement("w:r")
+        t = OxmlElement("w:t")
+        t.text = text
+        t.set(self._XML_SPACE, "preserve")
+        r.append(t)
+        return r
+
+    def _seq_field(self, label: str) -> list:
+        """Build the run sequence for a { SEQ <label> \\* ARABIC } complex field."""
+        def fldchar(kind):
+            r = OxmlElement("w:r")
+            fc = OxmlElement("w:fldChar")
+            fc.set(qn("w:fldCharType"), kind)
+            r.append(fc)
+            return r
+        instr_run = OxmlElement("w:r")
+        it = OxmlElement("w:instrText")
+        it.set(self._XML_SPACE, "preserve")
+        it.text = f" SEQ {label} \\* ARABIC "
+        instr_run.append(it)
+        result_run = OxmlElement("w:r")
+        rt = OxmlElement("w:t")
+        rt.text = "1"
+        result_run.append(rt)
+        return [fldchar("begin"), instr_run, fldchar("separate"), result_run, fldchar("end")]
+
+    @staticmethod
+    def _unwrap(el):
+        """Replace el with its children in place (keep content, drop the wrapper)."""
+        parent = el.getparent()
+        if parent is None:
+            return
+        pos = list(parent).index(el)
+        for child in list(el):
+            el.remove(child)
+            parent.insert(pos, child)
+            pos += 1
+        parent.remove(el)
+
+    def _restore_prchange(self, change_el):
+        """Reject a w:pPrChange/w:rPrChange: restore the recorded previous properties."""
+        parent = change_el.getparent()  # the w:pPr or w:rPr
+        if parent is None:
+            return
+        old = None
+        for c in change_el:
+            if c.tag in (qn("w:pPr"), qn("w:rPr")):
+                old = c
+                break
+        for c in list(parent):
+            if c is not change_el:
+                parent.remove(c)
+        if old is not None:
+            pos = list(parent).index(change_el)
+            for c in list(old):
+                old.remove(c)
+                parent.insert(pos, c)
+                pos += 1
+        parent.remove(change_el)
+
+    def _resolve(self, accept: bool, author: Optional[str] = None) -> int:
+        """Accept or reject all tracked changes under the document body."""
+        root = self.doc.element.body
+        count = 0
+
+        def match(el):
+            return author is None or el.get(qn("w:author")) == author
+
+        if accept:
+            for tag in ("w:del", "w:moveFrom"):
+                for el in list(root.iter(qn(tag))):
+                    if el.getparent() is not None and match(el):
+                        el.getparent().remove(el)
+                        count += 1
+            for tag in ("w:ins", "w:moveTo"):
+                for el in list(root.iter(qn(tag))):
+                    if el.getparent() is not None and match(el):
+                        self._unwrap(el)
+                        count += 1
+            for tag in ("w:rPrChange", "w:pPrChange", "w:tblPrChange",
+                        "w:trPrChange", "w:tcPrChange", "w:sectPrChange"):
+                for el in list(root.iter(qn(tag))):
+                    if el.getparent() is not None:
+                        el.getparent().remove(el)
+                        count += 1
+        else:
+            for tag in ("w:ins", "w:moveTo"):
+                for el in list(root.iter(qn(tag))):
+                    if el.getparent() is not None and match(el):
+                        el.getparent().remove(el)
+                        count += 1
+            for tag in ("w:del", "w:moveFrom"):
+                for el in list(root.iter(qn(tag))):
+                    if el.getparent() is not None and match(el):
+                        for dt in el.iter(qn("w:delText")):
+                            dt.tag = qn("w:t")
+                        self._unwrap(el)
+                        count += 1
+            for tag in ("w:rPrChange", "w:pPrChange"):
+                for el in list(root.iter(qn(tag))):
+                    if el.getparent() is not None:
+                        self._restore_prchange(el)
+                        count += 1
+        return count
