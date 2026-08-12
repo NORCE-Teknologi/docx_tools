@@ -172,6 +172,11 @@ All tools operate on a single document kept open in server memory. Call `open_do
 | `delete_paragraph` | `idx` | Delete a paragraph. |
 | `set_paragraph_style` | `idx`, `style` | Change a paragraph's style (e.g. `Heading 2`, `Body Text`). |
 | `set_caption` | `idx`, `text`, `label?`, `sep?`, `style?` | Rewrite a paragraph as a clean auto-numbered caption `<label> {SEQ <label> \* ARABIC><sep><text>`, clearing stray manual numbers / half-deleted field cruft. |
+| `delete_table` | `table_idx` | Delete a whole table (index from `get_tables`). |
+| `delete_table_row` | `table_idx`, `row` | Delete a single table row. |
+| `insert_image` | `after_idx`, `image_path`, `width_cm?`, `center?` | Insert an image in its own (centered) paragraph after the given index; natural size capped at the text-column width. Pair with `set_caption` for a numbered figure. |
+| `add_bookmark` | `idx`, `name` | Bookmark a paragraph (typically a heading) as a target for internal links. |
+| `add_internal_link` | `idx`, `text`, `bookmark`, `occurrence?` | Turn an occurrence of `text` in a paragraph into a Ctrl+Click internal hyperlink to a bookmark. |
 | `accept_changes` | `author?` | Accept all tracked changes (or just one author's). |
 | `reject_changes` | `author?` | Reject all tracked changes (or just one author's). |
 
@@ -228,6 +233,11 @@ ed.save("output_copy.docx")   # to a new file
 | `delete(idx)` | `str` | Delete paragraph, returns old text. |
 | `set_style(idx, style)` | `None` | Change paragraph style. |
 | `set_caption(idx, text, label='Figure', sep=': ', style=None)` | `str` | Rewrite a paragraph as an auto-numbered SEQ-field caption. |
+| `delete_table(table_idx)` | `list` | Delete a table, returns its rows for confirmation. |
+| `delete_table_row(table_idx, row)` | `list` | Delete one row, returns its cell texts. |
+| `insert_image(after_idx, image_path, width_cm=None, center=True)` | `int` | Insert an image paragraph, returns its index. |
+| `add_bookmark(idx, name)` | `str` | Bookmark a paragraph as a link target. |
+| `add_internal_link(idx, text, bookmark, occurrence=1)` | `str` | Internal hyperlink an occurrence of text to a bookmark. |
 | `accept_changes(author=None)` | `int` | Accept tracked changes, returns count resolved. |
 | `reject_changes(author=None)` | `int` | Reject tracked changes, returns count resolved. |
 | `save(path=None)` | `Path` | Save document. |

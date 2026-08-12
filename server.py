@@ -139,6 +139,15 @@ def get_tables() -> str:
 
 
 @mcp.tool()
+def get_core_properties() -> str:
+    """
+    Read the document's core properties (title, author, subject, keywords, dates).
+    Useful for spotting metadata inherited from a template or another document.
+    """
+    return json.dumps(_ed().core_properties(), ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
 def get_fields(idx: Optional[int] = None) -> str:
     """
     List Word field codes (SEQ, REF, ADDIN, etc.), which plain-text tools can't see.
@@ -205,6 +214,90 @@ def insert_paragraph_before(before_idx: int, text: str, style: str = "Body Text"
 
 
 @mcp.tool()
+def get_inline_objects(idx: int) -> str:
+    """
+    List a paragraph's non-run inline objects (content controls, hyperlinks,
+    bookmarks) with their positions. Cross-references and reference-manager
+    citations live here and are invisible to get_paragraph's text, so check this
+    before rewriting a paragraph that may contain them. Feed the positions to
+    set_paragraph_segments.
+    """
+    return json.dumps(_ed().inline_objects(idx), ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def set_paragraph_segments(idx: int, segments: list) -> str:
+    """
+    Rewrite a paragraph as an ordered mix of text and preserved inline objects.
+    Each segment is either a string (literal text) or an integer position from
+    get_inline_objects(idx). Use this to reposition or de-duplicate Word
+    cross-references and citations without destroying them — replace_paragraph
+    would silently drop them.
+    """
+    new_text = _ed().set_segments(idx, segments)
+    return f"P{idx} rebuilt: {new_text[:200]}"
+
+
+@mcp.tool()
+def set_paragraph_runs(idx: int, parts: list) -> str:
+    """
+    Rewrite a paragraph as runs with explicit formatting, for paragraphs that mix
+    bold/italic (e.g. a bold term followed by an italic definition).
+    parts is a list of objects: [{"text": "AMR ", "bold": true},
+    {"text": "Antimicrobial Resistance", "italic": true}].
+    Runs inherit the paragraph's existing font and language.
+    """
+    new_text = _ed().set_runs(idx, parts)
+    return f"P{idx} rebuilt with {len(parts)} run(s): {new_text[:200]}"
+
+
+@mcp.tool()
+def get_list_numbering(idx: int) -> str:
+    """
+    Report whether a paragraph carries automatic list numbering, as {num_id, level}
+    or null. Applying a heading style strips numbering, which silently breaks
+    "Section N" cross-references elsewhere in the text — check this after any
+    style change on a numbered heading.
+    """
+    return json.dumps(_ed().list_numbering(idx), ensure_ascii=False)
+
+
+@mcp.tool()
+def set_list_numbering(idx: int, num_id: Optional[str] = None, level: str = "0") -> str:
+    """
+    Attach automatic list numbering to a paragraph, or remove it with num_id=null.
+    Take num_id from a sibling that still numbers correctly (get_list_numbering).
+    Use this to restore numbering lost when a numbered paragraph was restyled as a
+    heading.
+    """
+    result = _ed().set_list_numbering(idx, num_id, level)
+    return f"P{idx} numbering: {json.dumps(result, ensure_ascii=False)}"
+
+
+@mcp.tool()
+def set_table_cell(table_idx: int, row: int, col: int, text: str) -> str:
+    """
+    Replace the text of a single table cell, keeping its character formatting.
+    Use get_tables() first to find the table index and row/column positions.
+    """
+    old = _ed().set_cell_text(table_idx, row, col, text)
+    return f"Table {table_idx} cell ({row},{col}) updated.\nOLD: {old[:150]}\nNEW: {text[:150]}"
+
+
+@mcp.tool()
+def insert_paragraph_like(model_idx: int, after_idx: int, text: str) -> str:
+    """
+    Insert a paragraph after after_idx, cloning the formatting of the paragraph at
+    model_idx (style, list numbering, indentation, character formatting).
+    Use this instead of insert_paragraph when adding an item to a numbered or
+    bulleted list, which a plain style name cannot reproduce.
+    Returns the index of the newly inserted paragraph.
+    """
+    new_idx = _ed().insert_like(model_idx, after_idx, text)
+    return f"Inserted at P{new_idx}, formatted like P{model_idx}."
+
+
+@mcp.tool()
 def delete_paragraph(idx: int) -> str:
     """
     Delete the paragraph at idx.
@@ -234,6 +327,99 @@ def set_caption(idx: int, text: str, label: str = "Figure",
     """
     new_text = _ed().set_caption(idx, text, label=label, sep=sep, style=style)
     return f"P{idx} set to caption: {new_text[:200]}"
+
+
+@mcp.tool()
+def set_core_properties(title: Optional[str] = None, subject: Optional[str] = None,
+                        author: Optional[str] = None, keywords: Optional[str] = None,
+                        comments: Optional[str] = None, category: Optional[str] = None,
+                        content_status: Optional[str] = None,
+                        last_modified_by: Optional[str] = None,
+                        version: Optional[str] = None) -> str:
+    """
+    Set document core properties. Only the arguments you pass are changed.
+    Use this to clear metadata inherited from a template (e.g. a wrong title
+    or another document's author) before sharing a file.
+    """
+    props = _ed().set_core_properties(
+        title=title, subject=subject, author=author, keywords=keywords,
+        comments=comments, category=category, content_status=content_status,
+        last_modified_by=last_modified_by, version=version)
+    return json.dumps(props, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def insert_table(after_idx: int, rows: list, style: str = "Table Grid",
+                 header: bool = True) -> str:
+    """
+    Insert a table immediately after the paragraph at after_idx.
+    rows is a list of row lists, e.g. [["Field","Value"],["WP","WP5"]];
+    short rows are padded. The first row is bolded unless header=false.
+    Returns the new table's index.
+    """
+    tbl_idx = _ed().insert_table(after_idx, rows, style=style, header=header)
+    return f"Inserted table {tbl_idx} after P{after_idx} ({len(rows)} rows, style '{style}')."
+
+
+@mcp.tool()
+def delete_table(table_idx: int) -> str:
+    """
+    Delete the table at table_idx (from get_tables()).
+    Returns the removed table's dimensions and first row for confirmation.
+    """
+    rows = _ed().delete_table(table_idx)
+    head = rows[0] if rows else []
+    return (f"Deleted table {table_idx} ({len(rows)} rows). "
+            f"First row was: {json.dumps(head, ensure_ascii=False)[:200]}")
+
+
+@mcp.tool()
+def delete_table_row(table_idx: int, row: int) -> str:
+    """
+    Delete a single row from the table at table_idx.
+    Use get_tables() first to find the table and row indices.
+    Returns the removed row's cell texts for confirmation.
+    """
+    cells = _ed().delete_table_row(table_idx, row)
+    return f"Deleted row {row} of table {table_idx}: {json.dumps(cells, ensure_ascii=False)[:200]}"
+
+
+@mcp.tool()
+def insert_image(after_idx: int, image_path: str,
+                 width_cm: Optional[float] = None, center: bool = True) -> str:
+    """
+    Insert an image (PNG/JPG/...) in its own paragraph immediately after the
+    paragraph at after_idx. width_cm scales the image, keeping aspect ratio;
+    omit it to use the natural size capped at the text-column width.
+    The image is centered unless center=false. Pair with set_caption on a
+    following paragraph for an auto-numbered figure caption.
+    Returns the new paragraph's index.
+    """
+    new_idx = _ed().insert_image(after_idx, image_path, width_cm=width_cm, center=center)
+    return f"Inserted image '{image_path}' at P{new_idx}."
+
+
+@mcp.tool()
+def add_bookmark(idx: int, name: str) -> str:
+    """
+    Bookmark the paragraph at idx so internal links can target it (typically a
+    heading). Names must be unique, start with a letter or underscore, and
+    contain only letters, digits, or underscores (max 40 chars).
+    """
+    _ed().add_bookmark(idx, name)
+    return f"Bookmark '{name}' added on P{idx}."
+
+
+@mcp.tool()
+def add_internal_link(idx: int, text: str, bookmark: str, occurrence: int = 1) -> str:
+    """
+    Turn the nth occurrence of `text` in paragraph idx into an internal
+    hyperlink to `bookmark` (Ctrl+Click navigation in Word; the visible text is
+    unchanged). Create the target first with add_bookmark. The occurrence must
+    lie within a single run — check get_paragraph_detail if the match fails.
+    """
+    _ed().add_internal_link(idx, text, bookmark, occurrence=occurrence)
+    return f"Linked '{text}' (occurrence {occurrence}) in P{idx} -> bookmark '{bookmark}'."
 
 
 @mcp.tool()
