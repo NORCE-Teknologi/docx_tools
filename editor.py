@@ -256,6 +256,152 @@ class DocxEditor:
             new_run._r.insert(0, first_rpr)
         return old_text
 
+    def replace_in_paragraph(self, idx: int, old: str, new: str,
+                             occurrence: int = 1) -> str:
+        """
+        Replace one occurrence of ``old`` with ``new`` inside paragraph idx,
+        touching only the runs that hold it. Field codes (SEQ captions, REF
+        cross-references, EndNote citations), their results, and the formatting
+        of every other run are left as they are — unlike replace(), which
+        rewrites the paragraph as one run.
+
+        Text inside complex fields (between fldChar begin and end) is not
+        searched; ``old`` must lie entirely in ordinary runs, and may span
+        several of them. Returns the paragraph's new text.
+        """
+        para = self.doc.paragraphs[idx]
+        # Editable (run, w:t) pairs in document order, skipping field internals.
+        pieces = []
+        state = None
+        for r in para._element.iter(qn("w:r")):
+            fc = r.find(qn("w:fldChar"))
+            if fc is not None:
+                typ = fc.get(qn("w:fldCharType"))
+                state = "field" if typ in ("begin", "separate") else None
+                continue
+            if state == "field":
+                continue
+            for t in r.findall(qn("w:t")):
+                pieces.append(t)
+        full = "".join(t.text or "" for t in pieces)
+        start = -1
+        for _ in range(occurrence):
+            start = full.find(old, start + 1)
+            if start < 0:
+                raise ValueError(f"P{idx}: {old!r} not found outside field codes "
+                                 f"(occurrence {occurrence})")
+        end = start + len(old)
+        pos = 0
+        done = False
+        for t in pieces:
+            txt = t.text or ""
+            a, b = pos, pos + len(txt)
+            pos = b
+            if b <= start or a >= end:
+                continue
+            lo, hi = max(start, a) - a, min(end, b) - a
+            if not done:
+                t.text = txt[:lo] + new + txt[hi:]
+                done = True
+            else:
+                t.text = txt[:lo] + txt[hi:]
+            t.set(self._XML_SPACE, "preserve")
+        return para.text
+
+    def _field_runs(self, idx: int, instr_contains: str) -> list:
+        """The runs of the first complex field in paragraph idx whose instruction
+        contains ``instr_contains`` (begin run .. end run, in order)."""
+        para = self.doc.paragraphs[idx]
+        runs, state, instr = [], None, ""
+        for r in para._element.iter(qn("w:r")):
+            fc = r.find(qn("w:fldChar"))
+            it = r.find(qn("w:instrText"))
+            if fc is not None and fc.get(qn("w:fldCharType")) == "begin":
+                runs, state, instr = [r], "instr", ""
+                continue
+            if state is None:
+                continue
+            runs.append(r)
+            if it is not None and state == "instr":
+                instr += it.text or ""
+            elif fc is not None:
+                typ = fc.get(qn("w:fldCharType"))
+                if typ == "separate":
+                    state = "result"
+                elif typ == "end":
+                    if instr_contains in instr:
+                        return runs
+                    runs, state = [], None
+        raise ValueError(f"P{idx}: no field whose instruction contains {instr_contains!r}")
+
+    def set_field_result(self, idx: int, instr_contains: str, text: str) -> str:
+        """
+        Set the displayed result of a complex field (what Word shows until the
+        field is updated), e.g. a stale caption number. The field code is kept,
+        so Word still recomputes it on update. Returns the paragraph text.
+        """
+        runs = self._field_runs(idx, instr_contains)
+        state, first = None, None
+        for r in runs:
+            fc = r.find(qn("w:fldChar"))
+            if fc is not None:
+                typ = fc.get(qn("w:fldCharType"))
+                state = "result" if typ == "separate" else None
+                continue
+            if state == "result":
+                for t in r.findall(qn("w:t")):
+                    if first is None:
+                        first = t
+                        t.text = text
+                        t.set(self._XML_SPACE, "preserve")
+                    else:
+                        t.text = ""
+        if first is None:
+            raise ValueError(f"P{idx}: the field has no result run to write into")
+        return self.doc.paragraphs[idx].text
+
+    def unlink_field(self, idx: int, instr_contains: str,
+                     text: Optional[str] = None) -> str:
+        """
+        Replace a complex field (SEQ, REF, citation…) by plain text: ``text`` if
+        given, else the field's current result. The run formatting of the
+        field's result is kept. Use for a cross-reference whose target was
+        deleted ("Error! Reference source not found."). Returns the paragraph text.
+        """
+        runs = self._field_runs(idx, instr_contains)
+        result_runs, state = [], None
+        for r in runs:
+            fc = r.find(qn("w:fldChar"))
+            if fc is not None:
+                state = "result" if fc.get(qn("w:fldCharType")) == "separate" else None
+                continue
+            if state == "result":
+                result_runs.append(r)
+        if text is None:
+            text = "".join(t.text or "" for r in result_runs for t in r.findall(qn("w:t")))
+        keep = result_runs[0] if result_runs else None
+        parent = runs[0].getparent()
+        pos = list(parent).index(runs[0])
+        for r in runs:
+            if r is not keep:
+                r.getparent().remove(r)
+        if keep is None:
+            keep = self._run(text)
+            parent.insert(pos, keep)
+        else:
+            ts = keep.findall(qn("w:t"))
+            for t in ts[1:]:
+                keep.remove(t)
+            if ts:
+                ts[0].text = text
+                ts[0].set(self._XML_SPACE, "preserve")
+            else:
+                t = OxmlElement("w:t")
+                t.text = text
+                t.set(self._XML_SPACE, "preserve")
+                keep.append(t)
+        return self.doc.paragraphs[idx].text
+
     def append(self, text: str, style: str = "Body Text") -> int:
         """Append a paragraph at the end of the document. Returns its index."""
         body = self.doc.element.body
@@ -639,6 +785,146 @@ class DocxEditor:
             p.insert(0, start)
         p.append(end)
         return name
+
+    def _new_ref_name(self) -> str:
+        """A Word-style cross-reference bookmark name (_Ref + 9 digits), unused."""
+        import random
+        names = self._bookmark_names()
+        while True:
+            name = "_Ref" + str(random.randint(100000000, 999999999))
+            if name not in names:
+                return name
+
+    def bookmark_caption(self, idx: int, name: Optional[str] = None) -> str:
+        """
+        Bookmark the label and number of the caption at idx ('Figure 7', i.e.
+        everything up to and including its SEQ field) so that cross-references
+        can target it, exactly as Word's Insert > Cross-reference does. If the
+        caption already carries a bookmark that starts before its SEQ field,
+        that name is returned and nothing is added. Returns the bookmark name.
+        """
+        p = self.doc.paragraphs[idx]._element
+        children = list(p)
+        seq_end = None
+        state = None
+        instr = ""
+        for ch in children:
+            if ch.tag != qn("w:r"):
+                continue
+            fc = ch.find(qn("w:fldChar"))
+            it = ch.find(qn("w:instrText"))
+            if fc is not None:
+                typ = fc.get(qn("w:fldCharType"))
+                if typ == "begin":
+                    state, instr = "instr", ""
+                elif typ == "end":
+                    if state is not None and instr.strip().upper().startswith("SEQ"):
+                        seq_end = ch
+                        break
+                    state = None
+            elif it is not None and state == "instr":
+                instr += it.text or ""
+        if seq_end is None:
+            raise ValueError(f"P{idx}: no SEQ field; is this a caption?")
+        for ch in children:
+            if ch is seq_end:
+                break
+            if ch.tag == qn("w:bookmarkStart"):
+                return ch.get(qn("w:name"))
+        name = name or self._new_ref_name()
+        if name in self._bookmark_names():
+            raise ValueError(f"bookmark '{name}' already exists")
+        ids = [int(bm.get(qn("w:id"), "0"))
+               for bm in self.doc.element.body.iter(qn("w:bookmarkStart"))]
+        bm_id = str(max(ids, default=0) + 1)
+        start = OxmlElement("w:bookmarkStart")
+        start.set(qn("w:id"), bm_id)
+        start.set(qn("w:name"), name)
+        end = OxmlElement("w:bookmarkEnd")
+        end.set(qn("w:id"), bm_id)
+        pPr = p.find(qn("w:pPr"))
+        if pPr is not None:
+            pPr.addnext(start)
+        else:
+            p.insert(0, start)
+        seq_end.addnext(end)
+        return name
+
+    def add_cross_reference(self, idx: int, text: str, bookmark: str,
+                            occurrence: int = 1) -> str:
+        """
+        Turn the nth occurrence of `text` in paragraph idx (e.g. 'Figure 7',
+        typed by hand) into a real Word cross-reference: a REF field to
+        `bookmark` whose displayed result is `text`, so it renumbers with the
+        caption on field update. The occurrence must lie within one run; the
+        run's character formatting is kept. Returns the paragraph text.
+        """
+        if bookmark not in self._bookmark_names():
+            raise ValueError(f"bookmark '{bookmark}' does not exist (bookmark_caption first)")
+        p = self.doc.paragraphs[idx]._element
+        seen = 0
+        state = None
+        for r in list(p.iter(qn("w:r"))):
+            fc = r.find(qn("w:fldChar"))
+            if fc is not None:
+                typ = fc.get(qn("w:fldCharType"))
+                state = "field" if typ in ("begin", "separate") else None
+                continue
+            if state == "field" or r.find(qn("w:instrText")) is not None:
+                continue          # inside a field code or its result: not plain text
+            if r.getparent().tag != qn("w:p"):
+                continue
+            ts = r.findall(qn("w:t"))
+            if len(ts) != 1 or not (ts[0].text or ""):
+                continue
+            full = ts[0].text
+            pos = 0
+            while True:
+                found = full.find(text, pos)
+                if found == -1:
+                    break
+                seen += 1
+                if seen == occurrence:
+                    rPr = r.find(qn("w:rPr"))
+
+                    def run(t):
+                        el = self._run(t)
+                        if rPr is not None:
+                            el.insert(0, copy.deepcopy(rPr))
+                        return el
+
+                    def fldchar(kind):
+                        el = OxmlElement("w:r")
+                        if rPr is not None:
+                            el.append(copy.deepcopy(rPr))
+                        fc = OxmlElement("w:fldChar")
+                        fc.set(qn("w:fldCharType"), kind)
+                        el.append(fc)
+                        return el
+
+                    instr_run = OxmlElement("w:r")
+                    if rPr is not None:
+                        instr_run.append(copy.deepcopy(rPr))
+                    it = OxmlElement("w:instrText")
+                    it.set(self._XML_SPACE, "preserve")
+                    it.text = f" REF {bookmark} \\h "
+                    instr_run.append(it)
+                    new_elems = []
+                    if found > 0:
+                        new_elems.append(run(full[:found]))
+                    new_elems += [fldchar("begin"), instr_run, fldchar("separate"), run(text), fldchar("end")]
+                    tail = full[found + len(text):]
+                    if tail:
+                        new_elems.append(run(tail))
+                    parent = r.getparent()
+                    at = list(parent).index(r)
+                    for el in reversed(new_elems):
+                        parent.insert(at, el)
+                    parent.remove(r)
+                    return self.doc.paragraphs[idx].text
+                pos = found + 1
+        raise ValueError(f"occurrence {occurrence} of {text!r} not found within a single "
+                         f"plain run of paragraph {idx}")
 
     def add_internal_link(self, idx: int, text: str, bookmark: str,
                           occurrence: int = 1) -> str:

@@ -182,6 +182,43 @@ def replace_paragraph(idx: int, new_text: str) -> str:
 
 
 @mcp.tool()
+def replace_in_paragraph(idx: int, old: str, new: str, occurrence: int = 1) -> str:
+    """
+    Replace one occurrence of `old` with `new` inside paragraph idx, editing only
+    the runs that hold it. Keeps field codes (SEQ caption numbers, REF
+    cross-references, EndNote citations) and the formatting of untouched runs;
+    use this instead of replace_paragraph on any paragraph get_fields() lists.
+    `old` must lie outside field codes and may span several runs.
+    Returns the paragraph's new text.
+    """
+    text = _ed().replace_in_paragraph(idx, old, new, occurrence)
+    return f"P{idx} edited.\nNEW: {text[:300]}"
+
+
+@mcp.tool()
+def set_field_result(idx: int, instr_contains: str, text: str) -> str:
+    """
+    Set the displayed result of a complex field in paragraph idx (the first
+    field whose instruction contains `instr_contains`, e.g. "SEQ Figure"),
+    such as a stale caption number. The field code is kept, so Word still
+    recomputes it when fields are updated. Returns the paragraph's text.
+    """
+    return f"P{idx} field result set.\nNEW: {_ed().set_field_result(idx, instr_contains, text)[:300]}"
+
+
+@mcp.tool()
+def unlink_field(idx: int, instr_contains: str, text: Optional[str] = None) -> str:
+    """
+    Replace a complex field in paragraph idx (the first whose instruction
+    contains `instr_contains`, e.g. "REF _Ref243577315") by plain text: `text`
+    if given, else the field's current result. For cross-references whose
+    target was deleted ("Error! Reference source not found."). Returns the
+    paragraph's text.
+    """
+    return f"P{idx} field unlinked.\nNEW: {_ed().unlink_field(idx, instr_contains, text)[:300]}"
+
+
+@mcp.tool()
 def append_paragraph(text: str, style: str = "Body Text") -> str:
     """
     Append a new paragraph at the end of the document.
@@ -408,6 +445,28 @@ def add_bookmark(idx: int, name: str) -> str:
     """
     _ed().add_bookmark(idx, name)
     return f"Bookmark '{name}' added on P{idx}."
+
+
+@mcp.tool()
+def bookmark_caption(idx: int, name: Optional[str] = None) -> str:
+    """
+    Bookmark the label and number of the caption at idx ("Figure 7": the text up
+    to and including its SEQ field), as Word does for cross-reference targets.
+    Returns the bookmark name (an existing one if the caption is already
+    bookmarked; a new Word-style _Ref… name otherwise).
+    """
+    return _ed().bookmark_caption(idx, name)
+
+
+@mcp.tool()
+def add_cross_reference(idx: int, text: str, bookmark: str, occurrence: int = 1) -> str:
+    """
+    Turn the nth occurrence of `text` in paragraph idx (a hand-typed "Figure 7")
+    into a real cross-reference: a REF field to `bookmark` (from
+    bookmark_caption) displaying `text`, which renumbers on field update.
+    The text must lie within one plain run. Returns the paragraph's text.
+    """
+    return f"P{idx} cross-reference added.\nNEW: {_ed().add_cross_reference(idx, text, bookmark, occurrence)[:300]}"
 
 
 @mcp.tool()
